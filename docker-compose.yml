@@ -2,7 +2,7 @@ services:
   odysseus:
     build: .
     ports:
-      - "7000:7000"
+      - "7001:7000"
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
