@@ -533,7 +533,7 @@ def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_c
             break
     return "\n".join(collected)[:max_chars]
 
-def _build_system_prompt(
+async def _build_system_prompt(
     messages: List[Dict],
     model: str,
     active_document,
@@ -603,6 +603,30 @@ def _build_system_prompt(
             f"subtract the offset above from the user's local time "
             f"(local {_now.strftime('%H:%M')} = {_utc.strftime('%H:%M')} UTC right now).\n\n"
         ) + agent_prompt
+    except Exception:
+        pass
+
+    # MemU memory injection — fetch relevant cross-session context
+    try:
+        from src.memu_bridge import retrieve_memories
+        logger.info(f"[memu] injection attempt: owner={owner!r} messages_count={len(messages)}")
+        _last_user = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                _last_user = (msg.get("content") or "")[:500]
+                break
+        if _last_user:
+            _mem_ctx = await retrieve_memories(_last_user, "Pipe")
+            if _mem_ctx:
+                agent_prompt = (
+                    f"## Your Persistent Memory\n"
+                    f"The following is YOUR cross-session memory (via MemU). "
+                    f"This is authoritative — these are facts you previously stored. "
+                    f"When the user asks about past events, decisions, or facts, "
+                    f"read this section and answer from it. Do NOT use tools to "
+                    f"re-query external APIs — this IS the memory store.\n\n"
+                    f"{_mem_ctx}\n\n"
+                ) + agent_prompt
     except Exception:
         pass
 
@@ -1373,7 +1397,7 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
-    messages, mcp_schemas = _build_system_prompt(
+    messages, mcp_schemas = await _build_system_prompt(
         messages, model, active_document, mcp_mgr, disabled_tools,
         needs_admin=_needs_admin, relevant_tools=_relevant_tools,
         mcp_disabled_map=_mcp_disabled_map,
