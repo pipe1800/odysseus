@@ -90,6 +90,10 @@ class PresetUpdateRequest(BaseModel):
         max_length=5000,
         description="Text to append to each outgoing user message"
     )
+    character_sheet: Optional[dict] = Field(
+        default=None,
+        description="Structured character sheet (10-category JSON) — compiled into system prompt"
+    )
 
 
 class DirectoryRequest(BaseModel):

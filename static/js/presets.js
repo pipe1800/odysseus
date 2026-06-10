@@ -85,6 +85,8 @@ export function init(apiBase) {
   initSaveAsTemplate();
   initExpandButton();
   initPersistentChat();
+  initSheetToggle();
+  initSheetExpand();
   loadUserTemplates();
 }
 
@@ -605,6 +607,21 @@ export function openCustomPresetModal() {
   if (prefixInput) prefixInput.value = savedConfig.inject_prefix || '';
   if (suffixInput) suffixInput.value = savedConfig.inject_suffix || '';
 
+  // Load character sheet if saved
+  const sheetEditor = document.getElementById('char-sheet-editor');
+  if (savedConfig.character_sheet) {
+    loadSheetData(savedConfig.character_sheet);
+    if (sheetEditor) sheetEditor.style.display = '';
+    const toggle = document.getElementById('char-sheet-toggle');
+    if (toggle) toggle.classList.add('active');
+  } else {
+    // Reset sheet form
+    loadSheetData({});
+    if (sheetEditor) sheetEditor.style.display = 'none';
+    const toggle = document.getElementById('char-sheet-toggle');
+    if (toggle) toggle.classList.remove('active');
+  }
+
   // Track initial state to detect changes for dynamic button label
   const _snapshot = {
     name: nameInput ? nameInput.value : '',
@@ -789,6 +806,19 @@ export async function saveCustomPreset(showToast, showError) {
     inject_prefix: _prefixInput ? _prefixInput.value : '',
     inject_suffix: _suffixInput ? _suffixInput.value : '',
   };
+
+  // Include character sheet if editor is visible and populated
+  const sheetEditor = document.getElementById('char-sheet-editor');
+  if (sheetEditor && sheetEditor.style.display !== 'none') {
+    const sheetData = getSheetData();
+    // Only include if at least one field has content
+    const hasContent = CATEGORIES.some(cat =>
+      Object.values(sheetData[cat.key] || {}).some(v =>
+        (Array.isArray(v) ? v.length > 0 : !!v)
+      )
+    );
+    if (hasContent) config.character_sheet = sheetData;
+  }
 
   try {
     const response = await fetch(`${API_BASE}/api/presets/custom`, {
@@ -1088,6 +1118,243 @@ export function removePersistentChat(sessionId) {
     selectedPreset = null;
     _syncCharIndicator();
   }
+}
+
+// ── Character Sheet Editor ───────────────────────────────────────────────
+
+const CATEGORIES = [
+  {
+    key: 'identity',
+    label: 'Identity',
+    fields: [
+      { key: 'pronouns', label: 'Pronouns', type: 'text' },
+      { key: 'age_range', label: 'Age Range', type: 'text' },
+      { key: 'species_type', label: 'Species/Type', type: 'text' },
+      { key: 'role_occupation', label: 'Role/Occupation', type: 'text' },
+      { key: 'archetype', label: 'Archetype', type: 'text' },
+    ]
+  },
+  {
+    key: 'appearance',
+    label: 'Appearance',
+    fields: [
+      { key: 'physical_description', label: 'Physical Description', type: 'text' },
+      { key: 'typical_attire', label: 'Typical Attire', type: 'text' },
+      { key: 'first_impression', label: 'First Impression', type: 'text' },
+      { key: 'defining_features', label: 'Defining Features (comma-separated)', type: 'list' },
+    ]
+  },
+  {
+    key: 'personality',
+    label: 'Personality',
+    fields: [
+      { key: 'traits', label: 'Traits (comma-separated)', type: 'list' },
+      { key: 'values', label: 'Values (comma-separated)', type: 'list' },
+      { key: 'fears', label: 'Fears (comma-separated)', type: 'list' },
+      { key: 'desires_goals', label: 'Desires/Goals', type: 'text' },
+      { key: 'internal_conflict', label: 'Internal Conflict', type: 'text' },
+      { key: 'mbti_enneagram', label: 'MBTI/Enneagram', type: 'text' },
+      { key: 'alignment', label: 'Alignment', type: 'text' },
+    ]
+  },
+  {
+    key: 'voice',
+    label: 'Voice & Speech',
+    fields: [
+      { key: 'tone_default', label: 'Default Tone', type: 'text' },
+      { key: 'vocabulary_level', label: 'Vocabulary Level', type: 'text' },
+      { key: 'sentence_style', label: 'Sentence Style', type: 'text' },
+      { key: 'catchphrases_verbal_tics', label: 'Catchphrases/Tics (comma-separated)', type: 'list' },
+      { key: 'nonverbal_habits', label: 'Nonverbal Habits', type: 'text' },
+      { key: 'emotional_range_in_speech', label: 'Emotional Range in Speech', type: 'text' },
+    ]
+  },
+  {
+    key: 'background',
+    label: 'Background',
+    fields: [
+      { key: 'backstory', label: 'Backstory', type: 'text' },
+      { key: 'current_situation', label: 'Current Situation', type: 'text' },
+      { key: 'defining_events', label: 'Defining Events (comma-separated)', type: 'list' },
+    ]
+  },
+  {
+    key: 'knowledge',
+    label: 'Knowledge',
+    fields: [
+      { key: 'expertise', label: 'Expertise (comma-separated)', type: 'list' },
+      { key: 'limitations', label: 'Limitations (comma-separated)', type: 'list' },
+      { key: 'knowledge_boundaries', label: 'Knowledge Boundaries', type: 'text' },
+    ]
+  },
+  {
+    key: 'relationships',
+    label: 'Relationships',
+    fields: [
+      { key: 'allies', label: 'Allies (comma-separated)', type: 'list' },
+      { key: 'rivals_enemies', label: 'Rivals/Enemies (comma-separated)', type: 'list' },
+      { key: 'social_standing', label: 'Social Standing', type: 'text' },
+      { key: 'group_role', label: 'Group Role', type: 'text' },
+    ]
+  },
+  {
+    key: 'behavior',
+    label: 'Behavior',
+    fields: [
+      { key: 'habits_routines', label: 'Habits/Routines (comma-separated)', type: 'list' },
+      { key: 'stress_response', label: 'Stress Response', type: 'text' },
+      { key: 'conflict_style', label: 'Conflict Style', type: 'text' },
+      { key: 'decision_style', label: 'Decision Style', type: 'text' },
+      { key: 'boundaries', label: 'Boundaries', type: 'text' },
+    ]
+  },
+  {
+    key: 'quirks',
+    label: 'Quirks',
+    fields: [
+      { key: 'quirks', label: 'Quirks (comma-separated)', type: 'list' },
+      { key: 'likes', label: 'Likes (comma-separated)', type: 'list' },
+      { key: 'dislikes', label: 'Dislikes (comma-separated)', type: 'list' },
+      { key: 'secrets', label: 'Secrets (comma-separated)', type: 'list' },
+      { key: 'hobbies', label: 'Hobbies (comma-separated)', type: 'list' },
+    ]
+  },
+  {
+    key: 'dynamic_state',
+    label: 'Dynamic State',
+    fields: [
+      { key: 'current_mood', label: 'Current Mood', type: 'text' },
+      { key: 'current_goal', label: 'Current Goal', type: 'text' },
+      { key: 'recent_events', label: 'Recent Events', type: 'text' },
+    ]
+  },
+];
+
+function buildSheetForm() {
+  const container = document.getElementById('char-sheet-sections');
+  if (!container) return;
+  let html = '';
+  CATEGORIES.forEach(cat => {
+    html += `<details class="sheet-category" style="margin-bottom:4px;">
+      <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--fg);padding:3px 4px;border-radius:4px;">${cat.label}</summary>
+      <div style="padding:4px 0 4px 8px;display:flex;flex-direction:column;gap:4px;">`;
+    cat.fields.forEach(f => {
+      const id = `sheet-${cat.key}-${f.key}`;
+      html += `<div style="display:flex;flex-direction:column;gap:2px;">
+        <label for="${id}" style="font-size:10px;color:var(--fg-subtle);">${f.label}</label>`;
+      if (f.type === 'list') {
+        html += `<input type="text" id="${id}" class="sheet-field" data-cat="${cat.key}" data-field="${f.key}" data-type="list" style="font-size:11px;padding:3px 5px;border:1px solid var(--border);border-radius:3px;background:var(--bg-input);color:var(--fg);" placeholder="item1, item2, ...">`;
+      } else {
+        html += `<input type="text" id="${id}" class="sheet-field" data-cat="${cat.key}" data-field="${f.key}" data-type="text" style="font-size:11px;padding:3px 5px;border:1px solid var(--border);border-radius:3px;background:var(--bg-input);color:var(--fg);">`;
+      }
+      html += `</div>`;
+    });
+    html += `</div></details>`;
+  });
+  container.innerHTML = html;
+}
+
+function getSheetData() {
+  const sheet = {};
+  CATEGORIES.forEach(cat => {
+    sheet[cat.key] = {};
+    cat.fields.forEach(f => {
+      const el = document.getElementById(`sheet-${cat.key}-${f.key}`);
+      if (!el) return;
+      const val = el.value.trim();
+      if (f.type === 'list') {
+        sheet[cat.key][f.key] = val ? val.split(',').map(s => s.trim()).filter(Boolean) : [];
+      } else {
+        sheet[cat.key][f.key] = val;
+      }
+    });
+  });
+  return sheet;
+}
+
+function loadSheetData(sheet) {
+  CATEGORIES.forEach(cat => {
+    const catData = sheet ? sheet[cat.key] : null;
+    cat.fields.forEach(f => {
+      const el = document.getElementById(`sheet-${cat.key}-${f.key}`);
+      if (!el) return;
+      if (catData && f.key in catData) {
+        const val = catData[f.key];
+        if (f.type === 'list' && Array.isArray(val)) {
+          el.value = val.join(', ');
+        } else if (val !== undefined && val !== null) {
+          el.value = String(val);
+        }
+      } else {
+        el.value = '';
+      }
+    });
+  });
+}
+
+function initSheetToggle() {
+  const toggle = document.getElementById('char-sheet-toggle');
+  const editor = document.getElementById('char-sheet-editor');
+  if (!toggle || !editor) return;
+
+  // Build the form once
+  buildSheetForm();
+
+  toggle.addEventListener('click', () => {
+    const isVisible = editor.style.display !== 'none';
+    editor.style.display = isVisible ? 'none' : '';
+    toggle.classList.toggle('active', !isVisible);
+  });
+}
+
+let _sheetExpanding = false;
+
+function initSheetExpand() {
+  const btn = document.getElementById('char-sheet-expand-btn');
+  if (!btn) return;
+
+  btn.addEventListener('click', async () => {
+    if (_sheetExpanding) return;
+    const promptInput = document.getElementById('custom-system-prompt');
+    const nameInput = document.getElementById('custom-character-name');
+    const draft = promptInput ? promptInput.value.trim() : '';
+    const name = nameInput ? nameInput.value.trim() : '';
+    if (!draft && !name) return;
+
+    _sheetExpanding = true;
+    const origText = btn.innerHTML;
+    btn.classList.add('expanding');
+    btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Filling...';
+
+    try {
+      const modelLabel = document.getElementById('model-picker-label');
+      const currentModel = modelLabel ? modelLabel.textContent.trim() : '';
+      const res = await fetch(`${API_BASE}/api/presets/expand-sheet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: draft, name, model: currentModel }),
+      });
+      const data = await res.json();
+      if (data.success && data.character_sheet) {
+        loadSheetData(data.character_sheet);
+        // Show the editor if hidden
+        const editor = document.getElementById('char-sheet-editor');
+        if (editor) editor.style.display = '';
+        const toggle = document.getElementById('char-sheet-toggle');
+        if (toggle) toggle.classList.add('active');
+        btn.textContent = 'Done!';
+      } else {
+        btn.textContent = 'Error';
+      }
+    } catch (e) {
+      console.error('Sheet expand failed:', e);
+      btn.textContent = 'Error';
+    } finally {
+      _sheetExpanding = false;
+      btn.classList.remove('expanding');
+      setTimeout(() => { btn.innerHTML = origText; }, 1500);
+    }
+  });
 }
 
 const presetsModule = {

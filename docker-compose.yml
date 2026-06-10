@@ -1,4 +1,21 @@
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ody
+      POSTGRES_PASSWORD: ody
+      POSTGRES_DB: odysseus
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ody"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   odysseus:
     build: .
     ports:
@@ -31,7 +48,7 @@ services:
       - SEARXNG_INSTANCE=http://searxng:8080
       - CHROMADB_HOST=chromadb
       - CHROMADB_PORT=8000
-      - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
+      - DATABASE_URL=postgresql://ody:ody@postgres:5432/odysseus
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
       - LOCALHOST_BYPASS=${LOCALHOST_BYPASS:-false}
       - ODYSSEUS_ADMIN_USER=${ODYSSEUS_ADMIN_USER:-admin}
@@ -64,6 +81,8 @@ services:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
     depends_on:
+      postgres:
+        condition: service_healthy
       searxng:
         condition: service_healthy
       chromadb:
@@ -134,14 +153,27 @@ services:
     image: docker.io/binwiederhier/ntfy
     command: serve
     ports:
-      - "${NTFY_BIND:-127.0.0.1}:8091:80"
+      - "${NTFY_BIND:-0.0.0.0}:8091:80"
     volumes:
       - ntfy-cache:/var/cache/ntfy
     environment:
       - NTFY_BASE_URL=${NTFY_BASE_URL:-http://localhost:8091}
     restart: unless-stopped
 
+  pgadmin:
+    image: docker.io/dpage/pgadmin4:latest
+    ports:
+      - "5050:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=ody@local.dev
+      - PGADMIN_DEFAULT_PASSWORD=ody
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
+  pgdata:
   searxng-data:
   chromadb-data:
   ntfy-cache:

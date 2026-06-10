@@ -167,6 +167,7 @@ class ChatProcessor:
         preset_system_prompt: Optional[str] = None,
         owner: Optional[str] = None,
         character_name: Optional[str] = None,
+        character_sheet: Optional[dict] = None,
         agent_mode: bool = False,
         incognito: bool = False,
         use_skills: bool = True,
@@ -179,7 +180,22 @@ class ChatProcessor:
         preface = []
         rag_sources = []
 
-        # Add preset system prompt if specified
+        # Compile character sheet into system prompt if provided
+        if character_sheet:
+            try:
+                from src.character_sheet import compile_character_sheet_from_dict
+                compiled = compile_character_sheet_from_dict(
+                    character_sheet, name=character_name or ""
+                )
+                if compiled:
+                    preface.append({
+                        "role": "system",
+                        "content": compiled
+                    })
+            except Exception:
+                pass
+
+        # Add preset system prompt if specified (overrides/augments sheet)
         if preset_system_prompt:
             preface.append({
                 "role": "system",

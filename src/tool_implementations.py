@@ -2826,6 +2826,12 @@ _APP_API_BLOCKLIST_METHOD_PATH = (
     ("POST",   "/api/calendar/events"),
     ("PUT",    "/api/calendar/events"),
     ("DELETE", "/api/calendar/events"),
+    # Memory is now automatic (MemU auto-memorize + auto-retrieve).
+    # Block the old manual endpoints.
+    ("POST",   "/api/memory"),
+    ("PUT",    "/api/memory"),
+    ("DELETE", "/api/memory"),
+    ("GET",    "/api/memory"),
 )
 
 
@@ -2929,6 +2935,8 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
             return {"error": "Don't hit /api/notes via app_api — use the `manage_notes` tool. It accepts natural-language due_date ('11pm today', 'tomorrow at 9am'), fires reminders from the due_date itself (no separate calendar event), and uses the caller's timezone. The raw endpoint requires ISO-UTC + a separate calendar event, both of which the agent tends to get wrong.", "exit_code": 1}
         if "/api/calendar/events" in path:
             return {"error": "Don't hit /api/calendar/events via app_api — use the `manage_calendar` tool. It handles tz-aware natural-language datetimes and reminder_minutes correctly. If the user wants a note + reminder, prefer `manage_notes` with due_date — it bundles both.", "exit_code": 1}
+        if "/api/memory" in path:
+            return {"error": "Memory is fully automatic — facts, names, and preferences are remembered without any tool calls. You do NOT need to save anything. Just respond naturally.", "exit_code": 1}
         return {"error": f"{method} {path} is blocked — it overwrites the whole cookbook state file. Use list_serve_presets / serve_preset / serve_model instead.", "exit_code": 1}
 
     body = args.get("body")

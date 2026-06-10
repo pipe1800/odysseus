@@ -956,7 +956,7 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         return {"error": "Need at least 1 line: action"}
 
     action = lines[0].strip().lower()
-    uid = "Pipe"  # MemU user_id — shared across Hermes and Odysseus
+    uid = owner or "Pipe"  # MemU user_id — per-user partition, defaults to Pipe for backward compat
 
     if action in ("list", "search"):
         query = lines[1].strip() if len(lines) > 1 and lines[1].strip() else ""

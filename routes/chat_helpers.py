@@ -32,6 +32,7 @@ class PresetInfo:
     max_tokens: Optional[int]
     system_prompt: Optional[str]
     character_name: Optional[str]
+    character_sheet: Optional[dict] = None
 
 
 @dataclass
@@ -288,16 +289,17 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
     return None
 
 
-def extract_preset(chat_handler, preset_id) -> PresetInfo:
+def extract_preset(chat_handler, preset_id, username: str = None) -> PresetInfo:
     """Extract preset parameters via chat_handler."""
-    temperature, max_tokens, system_prompt, char_name = (
-        chat_handler.validate_and_extract_preset(preset_id)
+    temperature, max_tokens, system_prompt, char_name, char_sheet = (
+        chat_handler.validate_and_extract_preset(preset_id, username=username)
     )
     return PresetInfo(
         temperature=temperature,
         max_tokens=max_tokens,
         system_prompt=system_prompt,
         character_name=char_name,
+        character_sheet=char_sheet,
     )
 
 
@@ -524,8 +526,11 @@ async def build_chat_context(
     This is the shared logic between /chat and /chat_stream — preset extraction,
     message preprocessing, memory/RAG/web injection, compaction, normalization.
     """
+    # User (needed early for preset resolution)
+    user = get_current_user(request)
+
     # Preset
-    preset = extract_preset(chat_handler, preset_id)
+    preset = extract_preset(chat_handler, preset_id, username=user)
 
     # Preprocess message (CoT, YouTube, VL images, build content). The
     # auto_opened_docs collector captures any docs created server-side
@@ -546,7 +551,6 @@ async def build_chat_context(
         fire_message_event(request, webhook_manager, session_id, sess, message, compare_mode)
 
     # Resolve user prefs
-    user = get_current_user(request)
     uprefs = load_prefs_for_user(user)
 
     # Memory enabled?
@@ -583,6 +587,7 @@ async def build_chat_context(
         preset_system_prompt=preset.system_prompt,
         owner=user,
         character_name=preset.character_name,
+        character_sheet=preset.character_sheet,
         agent_mode=agent_mode,
         incognito=incognito,
         use_skills=skills_enabled,

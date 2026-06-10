@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -53,26 +53,41 @@ Structure all responses using clear logical progression:
 Use precise language. Show causal relationships explicitly. Quantify uncertainty where applicable.
 """
         },
-        "custom": {
-            "name": "Custom",
-            "temperature": 1.0,
-            "max_tokens": 0,
-            "system_prompt": "",
-            "inject_prefix": "",
-            "inject_suffix": "",
-            "enabled": False,
-        }
+    }
+    
+    DEFAULT_CUSTOM = {
+        "name": "Custom",
+        "temperature": 1.0,
+        "max_tokens": 0,
+        "system_prompt": "",
+        "inject_prefix": "",
+        "inject_suffix": "",
+        "enabled": False,
     }
     
     def __init__(self, data_dir: str):
         self.presets_file = os.path.join(data_dir, "presets.json")
         self.presets = self.load()
     
+    def _ensure_user_namespace(self, username: str) -> dict:
+        """Ensure a user namespace exists under _users, returning it."""
+        if "_users" not in self.presets:
+            self.presets["_users"] = {}
+        if username not in self.presets["_users"]:
+            self.presets["_users"][username] = {
+                "custom": dict(self.DEFAULT_CUSTOM),
+                "user_templates": [],
+                "group_presets": [],
+            }
+        return self.presets["_users"][username]
+    
     def load(self) -> Dict[str, Any]:
         """Load presets from file, creating defaults if needed"""
         if not os.path.exists(self.presets_file):
-            self.save(self.DEFAULT_PRESETS)
-            return self.DEFAULT_PRESETS.copy()
+            defaults = dict(self.DEFAULT_PRESETS)
+            defaults["_users"] = {}
+            self.save(defaults)
+            return defaults.copy()
         
         try:
             with open(self.presets_file, 'r', encoding="utf-8") as f:
@@ -80,37 +95,49 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
             if not isinstance(presets, dict):
                 logger.error("Error loading presets: expected an object")
                 return self.DEFAULT_PRESETS.copy()
-            custom = presets.get("custom") if isinstance(presets, dict) else None
-            if isinstance(custom, dict) and "enabled" not in custom:
-                legacy_prompt = "You are a helpful, balanced assistant. Match your response style to the user's needs."
-                if (
-                    custom.get("name") == "Custom"
-                    and not custom.get("character_name")
-                    and custom.get("system_prompt") == legacy_prompt
-                ):
-                    custom["enabled"] = False
-                    custom["system_prompt"] = ""
-                    custom["temperature"] = 1.0
-                    custom["max_tokens"] = 0
-                    custom.setdefault("inject_prefix", "")
-                    custom.setdefault("inject_suffix", "")
-                    self.save(presets)
-            # Heal a forward-incompatible file the same way the legacy `custom`
-            # migration above does: fill in any built-in presets an older or
-            # partial presets.json is missing, so they reach existing installs
-            # (a missing built-in is otherwise silently absent from the picker
-            # served by GET /api/presets). There is no delete path for the
-            # built-in keys, so this never clobbers an intentional removal.
-            # Defaults first, loaded values win — user edits are preserved.
-            if isinstance(presets, dict) and any(
-                k not in presets for k in self.DEFAULT_PRESETS
-            ):
+
+            # Migrate old flat structure to per-user namespaced (one-time)
+            if "_users" not in presets:
+                old_custom = presets.pop("custom", dict(self.DEFAULT_CUSTOM))
+                old_templates = presets.pop("user_templates", [])
+                old_groups = presets.pop("group_presets", [])
+                presets["_users"] = {
+                    "lumi": {
+                        "custom": old_custom,
+                        "user_templates": old_templates,
+                        "group_presets": old_groups,
+                    }
+                }
+                logger.info("Migrated presets to per-user namespaced format")
+
+            # Heal legacy custom preset (disable empty default custom)
+            for username, user_data in presets.get("_users", {}).items():
+                custom = user_data.get("custom") if isinstance(user_data, dict) else None
+                if isinstance(custom, dict) and "enabled" not in custom:
+                    legacy_prompt = "You are a helpful, balanced assistant. Match your response style to the user's needs."
+                    if (
+                        custom.get("name") == "Custom"
+                        and not custom.get("character_name")
+                        and custom.get("system_prompt") == legacy_prompt
+                    ):
+                        custom["enabled"] = False
+                        custom["system_prompt"] = ""
+                        custom["temperature"] = 1.0
+                        custom["max_tokens"] = 0
+                        custom.setdefault("inject_prefix", "")
+                        custom.setdefault("inject_suffix", "")
+
+            # Heal missing built-in presets at root level
+            if any(k not in presets for k in self.DEFAULT_PRESETS):
                 presets = {**self.DEFAULT_PRESETS, **presets}
-                self.save(presets)
+
+            self.save(presets)
             return presets
         except Exception as e:
             logger.error(f"Error loading presets: {e}")
-            return self.DEFAULT_PRESETS.copy()
+            defaults = dict(self.DEFAULT_PRESETS)
+            defaults["_users"] = {}
+            return defaults
     
     def save(self, presets: Dict[str, Any]) -> bool:
         """Save presets to file"""
@@ -127,9 +154,28 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
             logger.error(f"Error saving presets: {e}")
             return False
     
-    def get(self, preset_id: str) -> Dict[str, Any]:
-        """Get a specific preset"""
+    def get(self, preset_id: str, username: Optional[str] = None) -> Dict[str, Any]:
+        """Get a specific preset. For 'custom', returns user-scoped version."""
+        if preset_id == "custom" and username:
+            ns = self._ensure_user_namespace(username)
+            return ns.get("custom", dict(self.DEFAULT_CUSTOM))
         return self.presets.get(preset_id)
+    
+    def get_all_for_user(self, username: str) -> Dict[str, Any]:
+        """Get all presets merged with user's custom preset."""
+        result = {}
+        # Copy global defaults
+        for k in self.DEFAULT_PRESETS:
+            if k in self.presets:
+                result[k] = self.presets[k]
+        # Add user's custom preset
+        ns = self._ensure_user_namespace(username)
+        result["custom"] = ns.get("custom", dict(self.DEFAULT_CUSTOM))
+        return result
+    
+    def get_all(self) -> Dict[str, Any]:
+        """Get all presets (legacy — prefer get_all_for_user)."""
+        return self.presets.copy()
     
     def update_custom(
         self,
@@ -140,9 +186,11 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
         enabled: bool = True,
         inject_prefix: str = "",
         inject_suffix: str = "",
+        character_sheet: Optional[dict] = None,
+        username: Optional[str] = None,
     ) -> bool:
-        """Update the custom preset"""
-        self.presets["custom"] = {
+        """Update the custom preset for a specific user (or global fallback)."""
+        preset = {
             "name": name or "Custom",
             "character_name": name,
             "temperature": temperature,
@@ -152,39 +200,70 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
             "inject_suffix": inject_suffix,
             "enabled": enabled,
         }
+        if character_sheet is not None:
+            preset["character_sheet"] = character_sheet
+        
+        if username:
+            ns = self._ensure_user_namespace(username)
+            ns["custom"] = preset
+        else:
+            self.presets["custom"] = preset
+        
         return self.save(self.presets)
     
-    def get_all(self) -> Dict[str, Any]:
-        """Get all presets"""
-        return self.presets.copy()
-
-    def get_user_templates(self) -> list:
-        """Get user-saved character templates."""
+    def get_user_templates(self, username: Optional[str] = None) -> list:
+        """Get user-saved character templates, scoped to username."""
+        if username:
+            ns = self._ensure_user_namespace(username)
+            return ns.get("user_templates", [])
         return self.presets.get("user_templates", [])
-
-    def save_user_template(self, template: dict) -> bool:
-        """Save a new user template or update existing by id."""
-        templates = self.presets.get("user_templates", [])
-        # Update existing if same id
+    
+    def save_user_template(self, template: dict, username: Optional[str] = None) -> bool:
+        """Save a new user template or update existing by id, scoped to username."""
+        if username:
+            ns = self._ensure_user_namespace(username)
+            templates = ns.get("user_templates", [])
+        else:
+            templates = self.presets.get("user_templates", [])
+        
         existing = next((i for i, t in enumerate(templates) if t.get("id") == template.get("id")), None)
         if existing is not None:
             templates[existing] = template
         else:
             templates.append(template)
-        self.presets["user_templates"] = templates
+        
+        if username:
+            ns["user_templates"] = templates
+        else:
+            self.presets["user_templates"] = templates
+        
         return self.save(self.presets)
-
-    def delete_user_template(self, template_id: str) -> bool:
-        """Delete a user template by id."""
-        templates = self.presets.get("user_templates", [])
-        self.presets["user_templates"] = [t for t in templates if t.get("id") != template_id]
+    
+    def delete_user_template(self, template_id: str, username: Optional[str] = None) -> bool:
+        """Delete a user template by id, scoped to username."""
+        if username:
+            ns = self._ensure_user_namespace(username)
+            templates = ns.get("user_templates", [])
+            ns["user_templates"] = [t for t in templates if t.get("id") != template_id]
+        else:
+            templates = self.presets.get("user_templates", [])
+            self.presets["user_templates"] = [t for t in templates if t.get("id") != template_id]
+        
         return self.save(self.presets)
-
-    def get_group_presets(self) -> list:
-        """Get saved group chat presets."""
+    
+    def get_group_presets(self, username: Optional[str] = None) -> list:
+        """Get saved group chat presets, scoped to username."""
+        if username:
+            ns = self._ensure_user_namespace(username)
+            return ns.get("group_presets", [])
         return self.presets.get("group_presets", [])
-
-    def save_group_presets(self, groups: list) -> bool:
-        """Save group chat presets."""
-        self.presets["group_presets"] = groups
+    
+    def save_group_presets(self, groups: list, username: Optional[str] = None) -> bool:
+        """Save group chat presets, scoped to username."""
+        if username:
+            ns = self._ensure_user_namespace(username)
+            ns["group_presets"] = groups
+        else:
+            self.presets["group_presets"] = groups
+        
         return self.save(self.presets)
